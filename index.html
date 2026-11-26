@@ -40,12 +40,22 @@ canvas#c{display:block;transform-origin:center center}
 <script>
 const c=document.getElementById('c'),x=c.getContext('2d'),eCnt=document.getElementById('cnt'),eSyn=document.getElementById('syn'),ov=document.getElementById('ov'),btnGroove=document.getElementById('btnGroove'),btnRec=document.getElementById('btnRec');
 function sz(){c.width=innerWidth;c.height=innerHeight}onresize=sz;sz();
-let ac=null,masterDest=null,rec=null,chunks=[],grabando=false,step=0,bpmTimer=null,activo=false,pulse=0,sinergias=0,activasCount=0,grooveOn=true,ondas=[];
+let ac=null,wavNode=null,wavL=[],wavR=[],grabando=false,step=0,bpmTimer=null,activo=false,pulse=0,sinergias=0,activasCount=0,grooveOn=true,ondas=[];
 const NOTAS=[130.81,155.56,174.61,196.00,233.08,261.63,311.13,349.23,392.00,466.16,523.25,622.25,783.99];
 const ESTRELLAS=[];for(let i=0;i<180;i++)ESTRELLAS.push({x:Math.random(),y:Math.random(),r:0.6+Math.random()*1.8,p:Math.random()*6.28,c:i%5===0?'#bae6fd':(i%7===0?'#fbcfe8':'#ffffff')});
 
 function initAudio(){
-  if(!ac){ac=new(window.AudioContext||window.webkitAudioContext)();masterDest=ac.createMediaStreamDestination()}
+  if(!ac){
+    ac=new(window.AudioContext||window.webkitAudioContext)();
+    wavNode=ac.createScriptProcessor(4096,2,2);
+    wavNode.onaudioprocess=e=>{
+      const iL=e.inputBuffer.getChannelData(0),iR=e.inputBuffer.getChannelData(1);
+      const oL=e.outputBuffer.getChannelData(0),oR=e.outputBuffer.getChannelData(1);
+      oL.set(iL);oR.set(iR);
+      if(grabando){wavL.push(new Float32Array(iL));wavR.push(new Float32Array(iR))}
+    };
+    wavNode.connect(ac.destination);
+  }
   if(ac.state==='suspended')ac.resume();
 }
 
@@ -55,50 +65,72 @@ function tocarNota(freq,dur,tipo,vol,slide){
   o.type=tipo||'sine';o.frequency.setValueAtTime(freq,t);
   if(isFinite(slide)&&slide>0)o.frequency.exponentialRampToValueAtTime(slide,t+dur);
   g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
-  o.connect(g);g.connect(ac.destination);if(masterDest)g.connect(masterDest);
+  o.connect(g);if(wavNode)g.connect(wavNode);else g.connect(ac.destination);
   o.start(t);o.stop(t+dur);
+}
+
+function exportarWAV(){
+  const len=wavL.reduce((a,b)=>a+b.length,0),buf=new ArrayBuffer(44+len*4),v=new DataView(buf);
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};
+  ws(0,'RIFF');v.setUint32(4,36+len*4,true);ws(8,'WAVE');ws(12,'fmt ');
+  v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,2,true);
+  v.setUint32(24,ac.sampleRate,true);v.setUint32(28,ac.sampleRate*4,true);
+  v.setUint16(32,4,true);v.setUint16(34,16,true);ws(36,'data');v.setUint32(40,len*4,true);
+  let off=44;
+  for(let i=0;i<wavL.length;i++)for(let j=0;j<wavL[i].length;j++){
+    const sL=Math.max(-1,Math.min(1,wavL[i][j])),sR=Math.max(-1,Math.min(1,wavR[i][j]));
+    v.setInt16(off,sL<0?sL*0x8000:sL*0x7FFF,true);v.setInt16(off+2,sR<0?sR*0x8000:sR*0x7FFF,true);off+=4;
+  }
+  return new Blob([buf],{type:'audio/wav'});
 }
 
 function toggleRec(e){
   if(e)e.stopPropagation();if(!activo)return;
   if(!grabando){
-    chunks=[];
-    try{rec=new MediaRecorder(masterDest.stream)}catch(err){alert('Grabación no soportada');return}
-    rec.ondataavailable=ev=>{if(ev.data.size>0)chunks.push(ev.data)};
-    rec.onstop=()=>{
-      const blob=new Blob(chunks,{type:rec.mimeType||'audio/webm'}),ext=blob.type.includes('mp4')?'m4a':'webm';
-      const file=new File([blob],'CosmicCrystal3D_ASEKAGE.'+ext,{type:blob.type});
-      if(navigator.canShare&&navigator.canShare({files:[file]}))navigator.share({files:[file],title:'Cosmic Crystal 3D',text:'Creado por ASEKAGE'}).catch(()=>{});
-      else{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='CosmicCrystal3D_ASEKAGE.'+ext;a.click()}
+    wavL=[];wavR=[];grabando=true;btnRec.textContent='■ PARAR';btnRec.classList.add('rec');
+  }else{
+    grabando=false;btnRec.textContent='● GRABAR';btnRec.classList.remove('rec');
+    if(!wavL.length)return;
+    const blob=exportarWAV(),url=URL.createObjectURL(blob);
+    const file=new File([blob],'CosmicCrystal_ASEKAGE.wav',{type:'audio/wav'});
+    const box=document.createElement('div');
+    box.style.cssText='position:fixed;inset:0;background:rgba(4,5,12,.92);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px;cursor:default';
+    box.innerHTML='<div style="background:#111827;border:2px solid #38bdf8;padding:22px;border-radius:18px;text-align:center;color:#fff;max-width:340px"><h3 style="margin:0 0 10px;color:#38bdf8">MEZCLA GRABADA (.WAV)</h3><audio controls src="'+url+'" style="width:100%;margin:8px 0 14px"></audio><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><a href="'+url+'" download="CosmicCrystal_ASEKAGE.wav" style="background:#4ade80;color:#04050c;padding:10px 14px;border-radius:10px;font-weight:900;text-decoration:none;font-size:13px">GUARDAR WAV</a><button id="bSh" style="background:#38bdf8;color:#04050c;border:0;padding:10px 14px;border-radius:10px;font-weight:900;cursor:pointer;font-size:13px">COMPARTIR</button><button id="bCl" style="background:#1e293b;color:#f87171;border:1px solid #f87171;padding:10px 14px;border-radius:10px;font-weight:800;cursor:pointer;font-size:13px">CERRAR</button></div></div>';
+    document.body.appendChild(box);
+    box.querySelector('#bCl').onclick=()=>box.remove();
+    box.querySelector('#bSh').onclick=async()=>{
+      if(navigator.canShare&&navigator.canShare({files:[file]})){
+        try{await navigator.share({files:[file],title:'Cosmic Crystal - ASEKAGE',text:'Mi mezcla creada en Cosmic Crystal'});return}catch(err){}
+      }
+      const a=document.createElement('a');a.href=url;a.download='CosmicCrystal_ASEKAGE.wav';a.click();
+      alert('En PC no existe menú nativo para enviar archivos: se ha descargado CosmicCrystal_ASEKAGE.wav para que lo adjuntes donde quieras.');
     };
-    rec.start();grabando=true;btnRec.textContent='■ PARAR';btnRec.classList.add('rec');
-  }else{rec.stop();grabando=false;btnRec.textContent='● GRABAR';btnRec.classList.remove('rec')}
+  }
 }
-
 const TIPOS=[
   {forma:'cubo',col:['#f87171','#dc2626','#991b1b'],pat:[1,0,0,0,1,0,0,0],inst:'bombo',nota:0},
   {forma:'cubo',col:['#ef4444','#b91c1c','#7f1d1d'],pat:[1,0,1,0,1,0,1,0],inst:'bombo',nota:0},
   {forma:'cubo',col:['#fb923c','#ea580c','#9a3412'],pat:[0,0,1,0,0,0,1,0],inst:'caja',nota:2},
   {forma:'cubo',col:['#f97316','#c2410c','#7c2d12'],pat:[0,0,1,0,0,1,1,0],inst:'caja',nota:3},
   {forma:'cubo',col:['#f43f5e','#be123c','#881337'],pat:[1,0,0,1,0,0,1,0],inst:'tribal',nota:3},
-  {forma:'piramide',col:['#38bdf8','#0284c7','#0369a1'],pat:[1,0,1,0,0,1,0,1],inst:'bajo',nota:0},
-  {forma:'piramide',col:['#0ea5e9','#0369a1','#0c4a6e'],pat:[0,1,0,1,0,1,0,1],inst:'bajo',nota:2},
-  {forma:'piramide',col:['#4ade80','#16a34a','#15803d'],pat:[1,1,0,1,1,0,1,0],inst:'arpegio',nota:4},
+  {forma:'piramide',col:['#38bdf8','#0284c7','#0369a1'],pat:[1,0,1,0,1,0,1,0],inst:'bajo',nota:0},
+  {forma:'piramide',col:['#0ea5e9','#0369a1','#0c4a6e'],pat:[1,1,0,1,1,0,1,0],inst:'bajo',nota:2},
+  {forma:'piramide',col:['#4ade80','#16a34a','#15803d'],pat:[1,1,1,1,1,1,1,1],inst:'arpegio',nota:4},
   {forma:'piramide',col:['#22c55e','#15803d','#14532d'],pat:[1,0,1,1,0,1,1,0],inst:'arpegio',nota:6},
-  {forma:'piramide',col:['#22d3ee','#0891b2','#155e75'],pat:[0,1,1,0,1,0,1,1],inst:'acido',nota:1},
+  {forma:'piramide',col:['#22d3ee','#0891b2','#155e75'],pat:[0,1,0,1,0,1,0,1],inst:'acido',nota:1},
   {forma:'prisma',col:['#c084fc','#9333ea','#6b21a8'],pat:[1,0,0,0,0,0,0,0],inst:'pad',nota:5},
-  {forma:'prisma',col:['#a855f7','#7e22ce','#581c87'],pat:[0,0,0,0,1,0,0,0],inst:'organo',nota:7},
+  {forma:'prisma',col:['#a855f7','#7e22ce','#581c87'],pat:[1,0,0,0,1,0,0,0],inst:'organo',nota:7},
   {forma:'diamante',col:['#f472b6','#db2777','#9d174d'],pat:[0,1,0,1,0,1,0,1],inst:'hat',nota:9},
   {forma:'diamante',col:['#ec4899','#be185d','#831843'],pat:[1,1,1,1,1,1,1,1],inst:'hat',nota:10},
-  {forma:'diamante',col:['#e879f9','#c026d3','#86198f'],pat:[0,0,1,0,0,0,0,1],inst:'lluvia',nota:11},
-  {forma:'esfera',col:['#818cf8','#4f46e5','#312e81'],pat:[1,0,0,0,1,0,0,0],inst:'coro',nota:3},
-  {forma:'esfera',col:['#60a5fa','#2563eb','#1e40af'],pat:[0,0,0,1,0,0,0,0],inst:'sonar',nota:8},
+  {forma:'diamante',col:['#e879f9','#c026d3','#86198f'],pat:[0,0,1,1,0,0,1,1],inst:'lluvia',nota:11},
+  {forma:'esfera',col:['#818cf8','#4f46e5','#312e81'],pat:[1,0,0,0,0,0,0,0],inst:'coro',nota:3},
+  {forma:'esfera',col:['#60a5fa','#2563eb','#1e40af'],pat:[0,0,0,0,1,0,0,0],inst:'sonar',nota:8},
   {forma:'esfera',col:['#34d399','#059669','#065f46'],pat:[1,0,0,0,0,0,0,0],inst:'subdrop',nota:0},
-  {forma:'estrella',col:['#fde047','#eab308','#a16207'],pat:[0,0,0,0,0,0,1,0],inst:'laser',nota:8},
-  {forma:'estrella',col:['#fbbf24','#d97706','#92400e'],pat:[1,0,1,0,1,0,0,1],inst:'arpa',nota:6},
-  {forma:'anillo',col:['#fb7185','#e11d48','#881337'],pat:[0,0,1,0,0,0,0,0],inst:'alien',nota:6},
-  {forma:'anillo',col:['#38bdf8','#7dd3fc','#0369a1'],pat:[0,0,0,0,0,1,0,0],inst:'sirena',nota:9},
-  {forma:'reloj',col:['#a3e635','#65a30d','#365314'],pat:[0,1,0,0,1,0,1,1],inst:'glitch',nota:10},
+  {forma:'estrella',col:['#fde047','#eab308','#a16207'],pat:[0,0,0,1,0,0,0,1],inst:'laser',nota:8},
+  {forma:'estrella',col:['#fbbf24','#d97706','#92400e'],pat:[1,0,1,0,1,0,1,0],inst:'arpa',nota:6},
+  {forma:'anillo',col:['#fb7185','#e11d48','#881337'],pat:[0,1,0,0,0,1,0,0],inst:'alien',nota:6},
+  {forma:'anillo',col:['#38bdf8','#7dd3fc','#0369a1'],pat:[0,0,0,0,0,0,1,0],inst:'sirena',nota:9},
+  {forma:'reloj',col:['#a3e635','#65a30d','#365314'],pat:[0,1,1,0,1,0,0,1],inst:'glitch',nota:10},
   {forma:'cruz',col:['#2dd4bf','#0d9488','#115e59'],pat:[1,0,0,0,0,0,0,0],inst:'cosmico',nota:1}
 ];
 
@@ -110,9 +142,9 @@ const BASES=[
   {forma:'piedra',col:['#fb923c','#ea580c','#7c2d12'],inst:'base_cyber',nota:1},
   {forma:'piedra',col:['#22d3ee','#0891b2','#164e63'],inst:'base_trance',nota:4}
 ];
+
 let piezas=[],cam={x:0,y:0,z:0.85},mano={x:c.width/2,y:c.height/2,wx:0,wy:0,grab:null,pan:false,lx:0,ly:0,down:false,pinch:0};
 const RADIO_ZONA=290;
-
 function crearPiezas(){
   piezas=[];
   BASES.forEach((tp,i)=>{
@@ -146,12 +178,12 @@ function tocarBase(inst,s,v,f){
   if(inst==='base_synth'){
     if(s%2===0)tocarNota(112,0.16,'sine',v*1.7,32);
     if(s%4===2)tocarNota(280,0.1,'square',v*0.55,95);
-    const mel=[0,0,3,3,5,5,4,3];tocarNota(NOTAS[mel[s]]*0.5,0.15,'sawtooth',v*0.65,0);
+    const mel=[0,2,3,5,7,5,3,2];tocarNota(NOTAS[mel[s]]*0.5,0.15,'sawtooth',v*0.65,0);
   }else if(inst==='base_techno'){
     if(s%2===0){tocarNota(125,0.15,'sine',v*1.9,30);ondas.push({r:18,a:0.5})}
     if(s%2===1){tocarNota(f*0.5,0.14,'sawtooth',v*0.85,f*0.48);tocarNota(1600,0.03,'square',v*0.22,800)}
   }else if(inst==='base_latin'){
-    if([1,0,0,1,1,0,1,0][s])tocarNota(115,0.16,'sine',v*1.8,34);
+    if([1,0,0,1,1,0,0,0][s])tocarNota(115,0.16,'sine',v*1.8,34);
     if([0,0,1,0,0,0,1,0][s])tocarNota(340,0.09,'triangle',v*0.9,140);
     if(s%2===0)tocarNota(NOTAS[(s+2)%8],0.14,'triangle',v*0.6,0);
   }else if(inst==='base_ambient'){
@@ -162,9 +194,10 @@ function tocarBase(inst,s,v,f){
     tocarNota(NOTAS[(s*3)%9]*0.5,0.12,'square',v*0.5,0);
   }else if(inst==='base_trance'){
     if(s%2===0)tocarNota(120,0.15,'sine',v*1.7,34);
-    const arp=[0,4,7,4,2,5,9,5];tocarNota(NOTAS[arp[s]],0.13,'triangle',v*0.75,0);
+    const arp=[0,4,7,9,7,4,5,7];tocarNota(NOTAS[arp[s]],0.13,'triangle',v*0.75,0);
   }
 }
+
 function dispararSonido(p,s){
   const v=p.vol*0.14,f=NOTAS[p.notaIdx],inst=p.tp.inst;
   if(p.base){p.brillo=1;tocarBase(inst,s,v,f);return}
@@ -190,7 +223,6 @@ function dispararSonido(p,s){
   else if(inst==='glitch')tocarNota(95,0.09,'sawtooth',v*0.55,f*2.8);
   else if(inst==='cosmico'){tocarNota(f*0.75,0.55,'sine',v*0.7,f*0.76);tocarNota(f*1.49,0.55,'triangle',v*0.4,f*1.51)}
 }
-
 function tickReloj(){
   if(!activo)return;
   const s=step%8;pulse=1;
@@ -220,6 +252,7 @@ function iniciar(e){if(e)e.stopPropagation();initAudio();crearPiezas();activo=tr
 function iso(wx,wy,wz){return{x:c.width*0.5-cam.x+(wx-wy)*0.866*cam.z,y:c.height*0.52-cam.y+((wx+wy)*0.5-wz)*cam.z}}
 function invIso(sx,sy){const dx=(sx-c.width*0.5+cam.x)/(0.866*cam.z),dy=(sy-c.height*0.52+cam.y)/(0.5*cam.z);return{wx:(dx+dy)*0.5,wy:(dy-dx)*0.5}}
 function polyIso(pts,fill,stroke){x.fillStyle=fill;x.beginPath();pts.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));x.closePath();x.fill();if(stroke){x.strokeStyle=stroke;x.lineWidth=1.1;x.stroke()}}
+
 function drawEntorno(){
   const t=Date.now()*0.001;
   const n1=x.createRadialGradient(c.width*0.2,c.height*0.25,10,c.width*0.2,c.height*0.25,c.width*0.48);
@@ -271,7 +304,6 @@ function drawMonolito(){
   x.fillStyle='#ffffff';x.shadowColor='#38bdf8';x.shadowBlur=22;
   x.beginPath();x.arc(punta.x,punta.y,(4.5+pulse*3.5)*cam.z,0,Math.PI*2);x.fill();x.shadowBlur=0;
 }
-
 function drawFigura3D(p){
   const sh=iso(p.wx,p.wy,0);
   if(sh.x<-95||sh.x>c.width+95||sh.y<-95||sh.y>c.height+95)return;
@@ -291,7 +323,7 @@ function drawFigura3D(p){
     x.fillStyle=gr;x.beginPath();x.arc(ce.x,ce.y,szS*0.95,0,Math.PI*2);x.fill();return;
   }
   if(f==='anillo'){
-    const ca=iso(p.wx,p.wy,p.wz+15);x.strokeStyle=p.tp.col[2];x.lineWidth=7*cam.z;x.beginPath();x.ellipse(ca.x,ca.y+4*cam.z,szS,szS*0.56,0,0,Math.PI*2);x.stroke();
+    const ca=iso(p.wx,p.wy,p.wz+15);x.strokeStyle=p.tp.col[1];x.lineWidth=7*cam.z;x.beginPath();x.ellipse(ca.x,ca.y+4*cam.z,szS,szS*0.56,0,0,Math.PI*2);x.stroke();
     x.strokeStyle=c0;x.lineWidth=5*cam.z;x.beginPath();x.ellipse(ca.x,ca.y,szS,szS*0.56,0,0,Math.PI*2);x.stroke();return;
   }
   if(f==='estrella'){
@@ -302,7 +334,7 @@ function drawFigura3D(p){
   if(f==='reloj'){
     const mid=iso(p.wx,p.wy,p.wz+17),b=[],t=[];
     for(let k=0;k<4;k++){const a=p.rot+k*Math.PI/2;b.push(iso(p.wx+Math.cos(a)*sz,p.wy+Math.sin(a)*sz,p.wz));t.push(iso(p.wx+Math.cos(a)*sz,p.wy+Math.sin(a)*sz,p.wz+34))}
-    for(let k=0;k<4;k++){const k2=(k+1)%4;polyIso([b[k],b[k2],mid],p.tp.col[2],'rgba(0,0,0,0.25)');polyIso([t[k],t[k2],mid],p.tp.col[1],'rgba(0,0,0,0.25)')}
+    for(let k=0;k<4;k++){const k2=(k+1)%4;polyIso([b[k],b[k2],mid],p.tp.col[1],'rgba(0,0,0,0.25)');polyIso([t[k],t[k2],mid],p.tp.col[2],'rgba(0,0,0,0.25)')}
     polyIso(t,c0,'rgba(255,255,255,0.35)');return;
   }
   const b=[];for(let k=0;k<4;k++){const a=p.rot+k*Math.PI/2+Math.PI/4;b.push(iso(p.wx+Math.cos(a)*sz,p.wy+Math.sin(a)*sz,p.wz))}
@@ -321,6 +353,7 @@ function drawFigura3D(p){
     polyIso(t,c0,'rgba(255,255,255,0.4)');
   }
 }
+
 function drawMano(sx,sy,cerrada){
   x.save();x.translate(sx,sy);
   x.fillStyle='rgba(0,0,0,0.4)';x.beginPath();x.ellipse(4,16,14,8,0,0,Math.PI*2);x.fill();
