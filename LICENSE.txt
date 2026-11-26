@@ -1,0 +1,13 @@
+Copyright (c) 2026 ASEKAGE
+
+Este proyecto se distribuye bajo la licencia Creative Commons Atribución-NoComercial 4.0 Internacional (CC BY-NC 4.0).
+
+Eres libre de:
+- Compartir: copiar y redistribuir el material en cualquier medio o formato.
+- Adaptar: remezclar, transformar y construir a partir del material.
+
+Bajo las siguientes condiciones:
+- Atribución: Debes dar crédito de manera adecuada a ASEKAGE como autor original, brindar un enlace a la licencia e indicar si se han realizado cambios.
+- NoComercial: No puedes hacer uso del material con propósitos comerciales sin autorización expresa y acuerdo previo con ASEKAGE.
+
+Texto completo de la licencia: https://creativecommons.org/licenses/by-nc/4.0/deed.es
